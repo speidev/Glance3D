@@ -1,0 +1,50 @@
+name: Release
+
+# Push a tag like v0.1.0 to build single-file binaries for each platform and attach them to a
+# GitHub release. Self-contained, so users don't need .NET installed.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    strategy:
+      matrix:
+        include:
+          - { os: windows-latest, rid: win-x64 }
+          - { os: ubuntu-latest,  rid: linux-x64 }
+          - { os: macos-latest,   rid: osx-arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Publish
+        shell: bash
+        run: >
+          dotnet publish src/Glance3D/Glance3D.csproj -c Release -r ${{ matrix.rid }}
+          --self-contained true -p:PublishSingleFile=true
+          -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=none -o out
+      - name: Package
+        shell: bash
+        run: |
+          cp LICENSE README.md out/
+          cd out
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a ../glance3d-${{ github.ref_name }}-${{ matrix.rid }}.zip .
+          else
+            tar czf ../glance3d-${{ github.ref_name }}-${{ matrix.rid }}.tar.gz .
+          fi
+      - name: Upload to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view ${{ github.ref_name }} >/dev/null 2>&1 \
+            || gh release create ${{ github.ref_name }} --title "${{ github.ref_name }}" --generate-notes || true
+          gh release upload ${{ github.ref_name }} glance3d-${{ github.ref_name }}-${{ matrix.rid }}.* --clobber
