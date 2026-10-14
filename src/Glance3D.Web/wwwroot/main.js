@@ -85,14 +85,18 @@ function uploadMesh(i) {
 }
 
 // Wireframe needs a line list: WebGL has no PolygonMode. Built on first use per mesh.
+//
+// The ELEMENT_ARRAY_BUFFER binding is part of VAO state, so this must not run with the mesh's
+// VAO bound: it once did, which silently replaced the mesh's triangle indices with line
+// indices, and turning wireframe back off drew garbage triangles that looked like inverted
+// culling. drawMesh binds the right index buffer explicitly on every draw instead.
 function edgesOf(i, m) {
   if (m.edges) return m.edges;
   const data = take(G.MeshEdges(i));
   const ebo = gl.createBuffer();
-  gl.bindVertexArray(m.vao);
+  gl.bindVertexArray(null);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data, gl.STATIC_DRAW);
-  gl.bindVertexArray(null);
   return (m.edges = { ebo, count: data.byteLength / 4 });
 }
 
@@ -240,13 +244,12 @@ function drawMesh(m, i, wire) {
   gl.uniform1i(U.uAlphaMode, alphaMode);
   gl.uniform1f(U.uAlphaCutoff, cutoff);
   gl.uniform1i(U.uUnlit, unlit);
+  // Build the edge list (if needed) before binding the VAO, then bind this draw's index buffer
+  // into it explicitly: triangles and lines share one VAO but not one index buffer (see edgesOf).
+  const e = wire ? edgesOf(i, m) : null;
   gl.bindVertexArray(m.vao);
-  if (wire) {
-    const e = edgesOf(i, m);
-    gl.drawElements(gl.LINES, e.count, gl.UNSIGNED_INT, 0);
-  } else {
-    gl.drawElements(gl.TRIANGLES, m.count, gl.UNSIGNED_INT, 0);
-  }
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, e ? e.ebo : m.ebo);
+  gl.drawElements(e ? gl.LINES : gl.TRIANGLES, e ? e.count : m.count, gl.UNSIGNED_INT, 0);
 }
 
 let last = performance.now();
