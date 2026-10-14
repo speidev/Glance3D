@@ -167,8 +167,8 @@ namespace Glance3D
 
     // The original engine's hand-rolled perspective, pulled out of the window so it can be tested
     // without a GL context. Camera space is X=forward, Y=right, Z=up, so the projection divides by
-    // x (depth) rather than -z, and the vertex shader in RenderWindow builds gl_Position as
-    // (y / HalfTanY, z / HalfTanZ, depth, x). Keep ProjectNdc and that shader in sync.
+    // x (depth) rather than -z, and the vertex shader (Shaders.Vertex) builds gl_Position as
+    // (y / HalfTanY, z / HalfTanZ, depth, x). Keep ProjectNdc and Shaders.Vertex in sync.
     public readonly struct Frustum
     {
         public readonly float HalfTanY; // horizontal: tan(fovX / 2)
@@ -192,16 +192,6 @@ namespace Glance3D
 
         public (float x, float y) ProjectNdc(Point cam) =>
             (cam.y / (HalfTanY * cam.x), cam.z / (HalfTanZ * cam.x));
-
-        // Inverse of the vertex shader: NDC x/y plus a [0,1] depth-buffer value back to camera
-        // space. The shader writes ndcZ * x = A*x - B, so ndcZ = A - B/x and x = B / (A - ndcZ).
-        public Point Unproject(float ndcX, float ndcY, float depth01)
-        {
-            float a     = (Far + Near) / (Far - Near);
-            float b     = 2f * Far * Near / (Far - Near);
-            float depth = b / (a - (depth01 * 2f - 1f));
-            return new Point(depth, ndcX * HalfTanY * depth, ndcY * HalfTanZ * depth);
-        }
 
         // Bounding-sphere test against all six planes. True only when the sphere is entirely
         // outside one of them, so it never culls something visible.

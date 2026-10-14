@@ -14,6 +14,17 @@ namespace Glance3D
         public static Model Load(string path) =>
             FromGltf(ModelRoot.Load(path), Path.GetFileName(path));
 
+        // From the bytes of a .glb, for hosts without a file system (the browser). A .gltf usually
+        // references side files (.bin, textures) that a single dropped file can't supply, so it's
+        // rejected with a message instead of failing halfway through.
+        public static Model Load(byte[] data, string name)
+        {
+            bool glb = data.Length >= 4 && data[0] == 'g' && data[1] == 'l' && data[2] == 'T' && data[3] == 'F';
+            if (!glb) throw new InvalidDataException("not a .glb file (in the browser, pack .gltf files as .glb first)");
+            using var stream = new MemoryStream(data, writable: false);
+            return FromGltf(ModelRoot.ReadGLB(stream), name);
+        }
+
         internal static Model FromGltf(ModelRoot root, string name)
         {
             var textures  = new Dictionary<GltfTexture, Texture>();

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Everything that doesn't touch a window or a GPU: glTF loading, the camera rig, projection,
+       culling, picking, input semantics and the shader source. The desktop (OpenTK) and web
+       (WebAssembly + WebGL2) hosts are thin shells around this, so both run the same code. -->
+  <PropertyGroup>
+    <RootNamespace>Glance3D</RootNamespace>
+    <IsTrimmable>true</IsTrimmable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Glance3D.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StbImageSharp" Version="2.30.15" />
+    <PackageReference Include="SharpGLTF.Core" Version="1.0.6" />
+  </ItemGroup>
+
+</Project>

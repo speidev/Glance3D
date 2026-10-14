@@ -125,22 +125,6 @@ namespace Glance3D.Tests
     public class FrustumTests
     {
         [Fact]
-        public void Unproject_InvertsTheShaderProjection()
-        {
-            var f   = new Frustum(1f, 1.5f, 0.05f, 200f);
-            var cam = new Point(12f, -3f, 2f);
-
-            var (x, y) = f.ProjectNdc(cam);
-            // Same depth mapping as the vertex shader, then to a [0,1] depth-buffer value.
-            float ndcZ = (f.Far + f.Near) / (f.Far - f.Near) - 2f * f.Far * f.Near / ((f.Far - f.Near) * cam.x);
-            var back = f.Unproject(x, y, (ndcZ + 1f) / 2f);
-
-            Assert.Equal(cam.x, back.x, 2);
-            Assert.Equal(cam.y, back.y, 2);
-            Assert.Equal(cam.z, back.z, 2);
-        }
-
-        [Fact]
         public void Culls_KeepsASphereThatStillPokesIntoView()
         {
             // Regression: the original test compared the raw y offset past the side plane to the

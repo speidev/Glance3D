@@ -16,32 +16,29 @@ namespace Glance3D
         public bool    ShowGrid = true;
     }
 
-    // The GL frame loop plus input. Owns every GL object; Model/Mesh/Material only carry handles.
-    //
-    // Frame: opaque + alpha-masked meshes -> reference grid -> alpha-blended meshes (sorted back to
-    // front, depth writes off). All meshes are world space, so the only transform is the camera's.
+    // The desktop host: an OpenTK window and desktop GL 3.3. It translates OpenTK input into an
+    // InputFrame for the shared Viewer and draws what RenderPlan decides; everything about how the
+    // viewer behaves lives in Glance3D.Core, shared with the browser host (src/Glance3D.Web).
+    // Owns every GL object; Model/Mesh/Texture only carry handles.
     internal sealed class ViewerWindow : GameWindow
     {
-        private const float OrbitSensitivity = 0.006f;  // rad per pixel of drag
-        private const float TurnSpeed        = 1.8f;    // rad/s for the arrow keys
-        private const double DoubleClickSec  = 0.35;
-        private const int   CaptureSamples   = 4;
+        private const double DoubleClickSec = 0.35;
+        private const int    CaptureSamples = 4;
 
         private readonly ViewerOptions _opts;
-        private readonly Camera        _cam = new();
+        private readonly Viewer        _viewer = new();
+        private readonly List<int>     _opaque = new(), _blended = new();
 
-        private Model? _model;
-        private Mesh?  _grid;
         private string _status = "drop a .glb or .gltf file here";
 
         private int _prog, _whiteTex;
         private int _uView, _uHalfTanY, _uHalfTanZ, _uNear, _uFar, _uTex,
                     _uBaseColor, _uAlphaMode, _uAlphaCutoff, _uUnlit;
 
-        private bool   _wireframe, _showGrid;
-        private double _lastClickTime = -1;
+        private double  _lastClickTime = -1;
         private Vector2 _lastClickPos;
-        private Vector2? _pendingPick;     // a double-click waiting for this frame's depth buffer
+
+        private Camera Cam => _viewer.Camera;
 
         public ViewerWindow(ViewerOptions opts)
             : base(new GameWindowSettings { UpdateFrequency = 0 },
@@ -56,9 +53,9 @@ namespace Glance3D
                        StartVisible     = opts.CapturePath == null,
                    })
         {
-            _opts     = opts;
-            _showGrid = opts.ShowGrid;
-            VSync     = VSyncMode.On; // a viewer has no reason to spin the GPU at 100%
+            _opts            = opts;
+            _viewer.ShowGrid = opts.ShowGrid;
+            VSync            = VSyncMode.On; // a viewer has no reason to spin the GPU at 100%
         }
 
         // ----- lifecycle -----------------------------------------------------
@@ -79,8 +76,8 @@ namespace Glance3D
             BuildShader();
             _whiteTex = CreateTexture(new Texture { RgbaData = [255, 255, 255, 255], Width = 1, Height = 1 });
 
-            if (_opts.YawDeg   is float y) _cam.Yaw   = y * MathF.PI / 180f;
-            if (_opts.PitchDeg is float p) _cam.Pitch = Math.Clamp(p * MathF.PI / 180f, -Camera.MaxPitch, Camera.MaxPitch);
+            if (_opts.YawDeg   is float y) Cam.Yaw   = y * MathF.PI / 180f;
+            if (_opts.PitchDeg is float p) Cam.Pitch = Math.Clamp(p * MathF.PI / 180f, -Camera.MaxPitch, Camera.MaxPitch);
 
             if (_opts.ModelPath != null) LoadModel(_opts.ModelPath);
             else UpdateTitle();
@@ -95,7 +92,6 @@ namespace Glance3D
         protected override void OnUnload()
         {
             UnloadModel();
-            FreeMesh(_grid);
             GL.DeleteTexture(_whiteTex);
             GL.DeleteProgram(_prog);
             base.OnUnload();
@@ -135,48 +131,38 @@ namespace Glance3D
             }
 
             UnloadModel();
-            _model = model;
+            _viewer.SetModel(model, Aspect);
             foreach (var mesh in model.Meshes) UploadMesh(mesh);
             foreach (var mat in model.Materials)
                 if (mat.BaseColorTexture is { GlHandle: 0 } tex)
                     tex.GlHandle = CreateTexture(tex);
+            UploadMesh(_viewer.Grid!);
 
-            FreeMesh(_grid);
-            _grid = BuildGrid(model);
-            UploadMesh(_grid);
-
-            FrameModel();
             _status = "";
             UpdateTitle();
         }
 
         private void UnloadModel()
         {
-            if (_model == null) return;
-            foreach (var mesh in _model.Meshes) FreeMesh(mesh);
-            foreach (var mat in _model.Materials)
+            if (_viewer.Model is not Model model) return;
+            foreach (var mesh in model.Meshes) FreeMesh(mesh);
+            FreeMesh(_viewer.Grid);
+            foreach (var mat in model.Materials)
                 if (mat.BaseColorTexture is { GlHandle: not 0 } tex)
                 {
                     GL.DeleteTexture(tex.GlHandle);
                     tex.GlHandle = 0;
                 }
-            _model = null;
-        }
-
-        private void FrameModel()
-        {
-            if (_model == null) return;
-            _cam.Frame(_model.Center, _model.Radius, Aspect);
         }
 
         private float Aspect => FramebufferSize.Y > 0 ? (float)FramebufferSize.X / FramebufferSize.Y : 16f / 9f;
 
         private void UpdateTitle()
         {
-            string mode = _cam.Mode == CameraMode.Orbit ? "orbit" : "fly";
-            Title = _model == null
+            var model = _viewer.Model;
+            Title = model == null
                 ? $"Glance3D - {_status}"
-                : $"Glance3D - {_model.Name} - {_model.TriangleCount:N0} triangles - {mode}" +
+                : $"Glance3D - {model.Name} - {model.TriangleCount:N0} triangles - {_viewer.ModeName}" +
                   (_status.Length > 0 ? $" - {_status}" : "");
         }
 
@@ -187,40 +173,45 @@ namespace Glance3D
             base.OnUpdateFrame(e);
             if (!IsFocused) return;
 
-            float dt = MathF.Min((float)e.Time, 0.1f);
-            var   kb = KeyboardState;
-            var   ms = MouseState;
+            var kb = KeyboardState;
+            var ms = MouseState;
 
             if (kb.IsKeyPressed(Keys.Escape)) { Close(); return; }
             if (kb.IsKeyPressed(Keys.F11))
                 WindowState = WindowState == WindowState.Fullscreen ? WindowState.Normal : WindowState.Fullscreen;
-            if (kb.IsKeyPressed(Keys.F)) FrameModel();
-            if (kb.IsKeyPressed(Keys.R)) { _cam.ResetHeading(); FrameModel(); }
-            if (kb.IsKeyPressed(Keys.Z)) _wireframe = !_wireframe;
-            if (kb.IsKeyPressed(Keys.G)) _showGrid  = !_showGrid;
-            if (kb.IsKeyPressed(Keys.Tab)) { _cam.ToggleMode(); UpdateTitle(); }
 
-            // Mouse: left drag turns (orbit / look), right or middle drag pans, Shift+left pans too
-            // for trackpads. Double-click re-centers the orbit on the surface under the cursor.
-            bool shift = kb.IsKeyDown(Keys.LeftShift) || kb.IsKeyDown(Keys.RightShift);
-            var  d     = ms.Delta;
-            bool panning = ms.IsButtonDown(MouseButton.Right) || ms.IsButtonDown(MouseButton.Middle)
-                        || (shift && ms.IsButtonDown(MouseButton.Left));
+            var input = new InputFrame
+            {
+                DragX           = ms.Delta.X,
+                DragY           = ms.Delta.Y,
+                Left            = ms.IsButtonDown(MouseButton.Left),
+                Right           = ms.IsButtonDown(MouseButton.Right),
+                Middle          = ms.IsButtonDown(MouseButton.Middle),
+                Shift           = kb.IsKeyDown(Keys.LeftShift) || kb.IsKeyDown(Keys.RightShift),
+                Wheel           = ms.ScrollDelta.Y,
+                ViewportHeight  = ClientSize.Y,
+                MoveForward     = Axis(kb, Keys.W, Keys.S),
+                MoveRight       = Axis(kb, Keys.D, Keys.A),
+                MoveUp          = Axis(kb, Keys.E, Keys.Q),
+                TurnYaw         = Axis(kb, Keys.Right, Keys.Left),
+                TurnPitch       = Axis(kb, Keys.Up, Keys.Down),
+                Frame           = kb.IsKeyPressed(Keys.F),
+                Reset           = kb.IsKeyPressed(Keys.R),
+                ToggleMode      = kb.IsKeyPressed(Keys.Tab),
+                ToggleWireframe = kb.IsKeyPressed(Keys.Z),
+                ToggleGrid      = kb.IsKeyPressed(Keys.G),
+            };
 
-            if (panning && d != Vector2.Zero)
-                _cam.Pan(d.X, d.Y, ClientSize.Y);
-            else if (ms.IsButtonDown(MouseButton.Left) && d != Vector2.Zero)
-                _cam.Turn(d.X * OrbitSensitivity, -d.Y * OrbitSensitivity);
-
-            if (ms.ScrollDelta.Y != 0f) _cam.Dolly(ms.ScrollDelta.Y);
-
+            // GLFW has no double-click event, so time consecutive presses here.
             if (ms.IsButtonPressed(MouseButton.Left))
             {
                 double now = GLFW.GetTime();
                 if (now - _lastClickTime < DoubleClickSec && (ms.Position - _lastClickPos).Length < 4f)
                 {
-                    _pendingPick   = ms.Position;
-                    _lastClickTime = -1;
+                    input.DoubleClick = true;
+                    input.ClickNdcX   = ms.Position.X / MathF.Max(1, ClientSize.X) * 2f - 1f;
+                    input.ClickNdcY   = 1f - ms.Position.Y / MathF.Max(1, ClientSize.Y) * 2f;
+                    _lastClickTime    = -1;
                 }
                 else
                 {
@@ -229,14 +220,8 @@ namespace Glance3D
                 }
             }
 
-            // Keyboard: WASD + Q/E (down/up), Shift for 4x. Speed scales with the model, so a
-            // building and a ring both cross the screen in about the same time.
-            float speed = (_model?.Radius ?? 1f) * (shift ? 4f : 1f) * dt;
-            float f = Axis(kb, Keys.W, Keys.S), r = Axis(kb, Keys.D, Keys.A), u = Axis(kb, Keys.E, Keys.Q);
-            if (f != 0 || r != 0 || u != 0) _cam.Move(f * speed, r * speed, u * speed);
-
-            float yaw = Axis(kb, Keys.Right, Keys.Left), pitch = Axis(kb, Keys.Up, Keys.Down);
-            if (yaw != 0 || pitch != 0) _cam.Turn(yaw * TurnSpeed * dt, pitch * TurnSpeed * dt);
+            _viewer.Update(input, MathF.Min((float)e.Time, 0.1f), Aspect);
+            if (input.ToggleMode || input.DoubleClick) UpdateTitle();
         }
 
         private static float Axis(KeyboardState kb, Keys pos, Keys neg) =>
@@ -247,29 +232,21 @@ namespace Glance3D
         protected override void OnRenderFrame(FrameEventArgs e)
         {
             base.OnRenderFrame(e);
-            var frustum = DrawScene(FramebufferSize.X, FramebufferSize.Y);
-
-            if (_pendingPick is Vector2 click)
-            {
-                _pendingPick = null;
-                PickPivot(click, frustum);
-            }
-
+            DrawScene(FramebufferSize.X, FramebufferSize.Y);
             SwapBuffers();
         }
 
-        private Frustum DrawScene(int width, int height)
+        private void DrawScene(int width, int height)
         {
             GL.Viewport(0, 0, width, height);
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+            if (_viewer.Model is not Model model) return;
 
-            var (near, far) = _model != null ? _cam.ClipRange(_model.Center, _model.Radius) : (0.01f, 100f);
-            var frustum     = new Frustum(_cam.FovY, height > 0 ? (float)width / height : 1f, near, far);
-            if (_model == null) return frustum;
+            var frustum = RenderPlan.FrustumFor(Cam, model, height > 0 ? (float)width / height : 1f);
+            RenderPlan.DrawOrder(model, Cam, frustum, _opaque, _blended);
 
             GL.UseProgram(_prog);
-            var view = ViewMatrix();
-            GL.UniformMatrix4(_uView, false, ref view);
+            GL.UniformMatrix4(_uView, 1, false, RenderPlan.ViewMatrix(Cam));
             GL.Uniform1(_uHalfTanY, frustum.HalfTanY);
             GL.Uniform1(_uHalfTanZ, frustum.HalfTanZ);
             GL.Uniform1(_uNear, frustum.Near);
@@ -277,40 +254,27 @@ namespace Glance3D
             GL.Uniform1(_uTex, 0);
             GL.ActiveTexture(TextureUnit.Texture0);
 
-            GL.PolygonMode(MaterialFace.FrontAndBack, _wireframe ? PolygonMode.Line : PolygonMode.Fill);
-
-            var blended = new List<(Mesh mesh, float depth)>();
-            foreach (var mesh in _model.Meshes)
-            {
-                var c = ToCamera(mesh.BoundCenter);
-                if (frustum.Culls(c, mesh.BoundRadius)) continue;
-                if (MaterialOf(mesh).Alpha == AlphaMode.Blend) blended.Add((mesh, c.x));
-                else DrawMesh(mesh);
-            }
-
-            GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+            var fill = _viewer.Wireframe ? PolygonMode.Line : PolygonMode.Fill;
+            GL.PolygonMode(MaterialFace.FrontAndBack, fill);
+            foreach (int i in _opaque) DrawMesh(model, model.Meshes[i]);
 
             // Grid and blended surfaces read depth but don't write it, so they never hide each
-            // other's far side. Blended meshes are sorted per mesh, not per triangle: good enough
-            // for glass panes and foliage cards, not for interpenetrating transparent volumes.
+            // other's far side.
             GL.Enable(EnableCap.Blend);
             GL.DepthMask(false);
-            if (_showGrid && _grid != null) DrawGrid(_grid);
-            GL.PolygonMode(MaterialFace.FrontAndBack, _wireframe ? PolygonMode.Line : PolygonMode.Fill);
-            foreach (var (mesh, _) in blended.OrderByDescending(b => b.depth)) DrawMesh(mesh);
+            GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+            if (_viewer.ShowGrid && _viewer.Grid != null) DrawGrid(_viewer.Grid);
+            GL.PolygonMode(MaterialFace.FrontAndBack, fill);
+            foreach (int i in _blended) DrawMesh(model, model.Meshes[i]);
             GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
             GL.DepthMask(true);
             GL.Disable(EnableCap.Blend);
-
-            return frustum;
         }
 
-        private Material MaterialOf(Mesh mesh) => _model!.Materials[mesh.MaterialIndex];
-
-        private void DrawMesh(Mesh mesh)
+        private void DrawMesh(Model model, Mesh mesh)
         {
-            var mat = MaterialOf(mesh);
-            if (mat.DoubleSided || _wireframe) GL.Disable(EnableCap.CullFace);
+            var mat = model.Materials[mesh.MaterialIndex];
+            if (mat.DoubleSided || _viewer.Wireframe) GL.Disable(EnableCap.CullFace);
             else GL.Enable(EnableCap.CullFace);
 
             GL.BindTexture(TextureTarget.Texture2D, mat.BaseColorTexture is { GlHandle: not 0 } t ? t.GlHandle : _whiteTex);
@@ -332,42 +296,6 @@ namespace Glance3D
             GL.Uniform1(_uUnlit, 1);
             GL.BindVertexArray(grid.Vao);
             GL.DrawElements(PrimitiveType.Lines, grid.Indices.Length, DrawElementsType.UnsignedInt, 0);
-        }
-
-        private Point ToCamera(Point world) => Mat3.Mul(_cam.InvRot, world - _cam.Position);
-
-        // World -> camera as a GL matrix: cam = InvRot * (p - Position).
-        // OpenTK's Matrix4 is row-major and uploaded with transpose=false, so OpenTK row i becomes
-        // GLSL column i. Columns 0..2 are InvRot's columns, column 3 the translation.
-        private Matrix4 ViewMatrix()
-        {
-            var R = _cam.InvRot;
-            var t = Mat3.Mul(R, -_cam.Position);
-            return new Matrix4(
-                R.m00, R.m10, R.m20, 0f,
-                R.m01, R.m11, R.m21, 0f,
-                R.m02, R.m12, R.m22, 0f,
-                t.x,   t.y,   t.z,   1f);
-        }
-
-        // Read the depth under a double-click and orbit around that surface point from now on.
-        // Must run after drawing and before SwapBuffers: the back buffer is undefined after a swap.
-        private void PickPivot(Vector2 clientPos, Frustum frustum)
-        {
-            var fb = FramebufferSize;
-            int px = (int)(clientPos.X * fb.X / MathF.Max(1, ClientSize.X));
-            int py = fb.Y - 1 - (int)(clientPos.Y * fb.Y / MathF.Max(1, ClientSize.Y));
-            if (px < 0 || py < 0 || px >= fb.X || py >= fb.Y) return;
-
-            float depth = 1f;
-            GL.ReadPixels(px, py, 1, 1, PixelFormat.DepthComponent, PixelType.Float, ref depth);
-            if (depth >= 1f) return; // background: keep the current pivot
-
-            float ndcX = (px + 0.5f) / fb.X * 2f - 1f;
-            float ndcY = (py + 0.5f) / fb.Y * 2f - 1f;
-            var cam = frustum.Unproject(ndcX, ndcY, depth);
-            _cam.OrbitAround(_cam.Position + Mat3.Mul(_cam.Rot, cam));
-            UpdateTitle();
         }
 
         // ----- offscreen capture ---------------------------------------------
@@ -395,7 +323,7 @@ namespace Glance3D
             GL.FramebufferRenderbuffer(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, RenderbufferTarget.Renderbuffer, color);
 
             // Frame for the capture's aspect, not the hidden window's.
-            if (_model != null) _cam.Frame(_model.Center, _model.Radius, (float)w / h);
+            _viewer.FrameModel((float)w / h);
 
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, msFbo);
             DrawScene(w, h);
@@ -417,111 +345,12 @@ namespace Glance3D
             Console.WriteLine($"[glance3d] wrote {path}");
         }
 
-        // ----- grid ----------------------------------------------------------
-
-        // A floor grid under the model: lines on the plane of its lowest point, spaced at a power
-        // of ten picked so there are roughly 5-50 lines each side whatever the model's scale.
-        // Drawn with the mesh shader in unlit mode, alpha from the vertex color.
-        private static Mesh BuildGrid(Model model)
-        {
-            float step  = MathF.Pow(10f, MathF.Floor(MathF.Log10(model.Radius * 0.5f)));
-            int   lines = (int)MathF.Ceiling(model.Radius * 1.5f / step);
-            float half  = lines * step;
-            float cx    = MathF.Round(model.Center.x / step) * step;
-            float cy    = MathF.Round(model.Center.y / step) * step;
-            float z     = model.BoundsMin.z;
-
-            var pos = new List<float>();
-            var col = new List<float>();
-            void Line(float x0, float y0, float x1, float y1, float a)
-            {
-                pos.AddRange([x0, y0, z, x1, y1, z]);
-                for (int k = 0; k < 2; k++) col.AddRange([0.75f, 0.78f, 0.85f, a]);
-            }
-
-            for (int i = -lines; i <= lines; i++)
-            {
-                float a = i == 0 ? 0.45f : i % 10 == 0 ? 0.3f : 0.14f;
-                Line(cx + i * step, cy - half, cx + i * step, cy + half, a);
-                Line(cx - half, cy + i * step, cx + half, cy + i * step, a);
-            }
-
-            int n = pos.Count / 3;
-            return new Mesh
-            {
-                Positions = pos.ToArray(),
-                Colors    = col.ToArray(),
-                Normals   = new float[n * 3],
-                UVs       = new float[n * 2],
-                Indices   = Enumerable.Range(0, n).Select(i => (uint)i).ToArray(),
-            };
-        }
-
         // ----- GL resources --------------------------------------------------
 
         private void BuildShader()
         {
-            // Camera space is X=forward, Y=right, Z=up, so clip w is the camera-space x (depth) and
-            // depth is the standard GL perspective mapping applied to x. Keep in sync with
-            // Frustum.ProjectNdc / Unproject.
-            const string vert = """
-                #version 330 core
-                layout(location=0) in vec3 aPos;
-                layout(location=1) in vec2 aUV;
-                layout(location=2) in vec3 aNormal;
-                layout(location=3) in vec4 aColor;
-                uniform mat4  uView;
-                uniform float uHalfTanY;
-                uniform float uHalfTanZ;
-                uniform float uNear;
-                uniform float uFar;
-                out vec2 vUV;
-                out vec3 vNormal;
-                out vec4 vColor;
-                void main() {
-                    vec3 cam = (uView * vec4(aPos, 1.0)).xyz;
-                    float ndcZ = (uFar + uNear) / (uFar - uNear) * cam.x
-                               - 2.0 * uFar * uNear / (uFar - uNear);
-                    gl_Position = vec4(cam.y / uHalfTanY, cam.z / uHalfTanZ, ndcZ, cam.x);
-                    vUV     = aUV;
-                    vNormal = mat3(uView) * aNormal;
-                    vColor  = aColor;
-                }
-                """;
-
-            // A key light from over the viewer's left shoulder plus a sky/ground fill, both fixed
-            // to the camera so the side you're looking at is always lit. That's the point of a
-            // viewer: inspecting shape, not staging a scene. glTF UVs have their origin at the
-            // image's top-left, which is also row 0 of the decoded image, so V is used as-is.
-            const string frag = """
-                #version 330 core
-                in vec2 vUV;
-                in vec3 vNormal;
-                in vec4 vColor;
-                uniform sampler2D uTex;
-                uniform vec4  uBaseColor;
-                uniform int   uAlphaMode;
-                uniform float uAlphaCutoff;
-                uniform int   uUnlit;
-                out vec4 fragColor;
-                void main() {
-                    vec4 c = texture(uTex, vUV) * uBaseColor * vColor;
-                    if (uAlphaMode == 1 && c.a < uAlphaCutoff) discard;
-                    if (uAlphaMode != 2) c.a = 1.0;
-                    if (uUnlit == 0) {
-                        vec3 n = normalize(vNormal);
-                        if (!gl_FrontFacing) n = -n;
-                        vec3  keyDir = normalize(vec3(-1.0, -0.45, 0.75));
-                        float key    = max(dot(n, keyDir), 0.0);
-                        float sky    = 0.5 + 0.5 * n.z;
-                        c.rgb *= 0.22 + 0.18 * sky + 0.75 * key;
-                    }
-                    fragColor = c;
-                }
-                """;
-
-            int vs = Compile(ShaderType.VertexShader, vert);
-            int fs = Compile(ShaderType.FragmentShader, frag);
+            int vs = Compile(ShaderType.VertexShader, Shaders.Vertex(es: false));
+            int fs = Compile(ShaderType.FragmentShader, Shaders.Fragment(es: false));
             _prog = GL.CreateProgram();
             GL.AttachShader(_prog, vs);
             GL.AttachShader(_prog, fs);
@@ -555,17 +384,7 @@ namespace Glance3D
 
         private static void UploadMesh(Mesh mesh)
         {
-            const int floats = 12; // pos 3, uv 2, normal 3, color 4
-            int n = mesh.Positions.Length / 3;
-            var interleaved = new float[n * floats];
-            for (int i = 0; i < n; i++)
-            {
-                int o = i * floats;
-                Array.Copy(mesh.Positions, i * 3, interleaved, o,     3);
-                Array.Copy(mesh.UVs,       i * 2, interleaved, o + 3, 2);
-                Array.Copy(mesh.Normals,   i * 3, interleaved, o + 5, 3);
-                Array.Copy(mesh.Colors,    i * 4, interleaved, o + 8, 4);
-            }
+            var interleaved = RenderPlan.Interleave(mesh);
 
             mesh.Vao = GL.GenVertexArray();
             mesh.Vbo = GL.GenBuffer();
@@ -577,7 +396,7 @@ namespace Glance3D
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, mesh.Ebo);
             GL.BufferData(BufferTarget.ElementArrayBuffer, mesh.Indices.Length * sizeof(uint), mesh.Indices, BufferUsageHint.StaticDraw);
 
-            const int stride = floats * sizeof(float);
+            const int stride = RenderPlan.VertexFloats * sizeof(float);
             GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, stride, 0);
             GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, stride, 3 * sizeof(float));
             GL.VertexAttribPointer(2, 3, VertexAttribPointerType.Float, false, stride, 5 * sizeof(float));

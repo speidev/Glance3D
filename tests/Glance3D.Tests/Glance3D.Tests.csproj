@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Glance3D.Core\Glance3D.Core.csproj" />
     <ProjectReference Include="..\..\src\Glance3D\Glance3D.csproj" />
   </ItemGroup>
 

@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- The desktop host: an OpenTK window, desktop OpenGL 3.3, and the command line. All viewer
+       logic lives in Glance3D.Core and is shared with the web host. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Glance3D</RootNamespace>
@@ -14,8 +16,10 @@
 
   <ItemGroup>
     <PackageReference Include="OpenTK" Version="4.8.2" />
-    <PackageReference Include="StbImageSharp" Version="2.30.15" />
-    <PackageReference Include="SharpGLTF.Core" Version="1.0.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Glance3D.Core\Glance3D.Core.csproj" />
   </ItemGroup>
 
 </Project>

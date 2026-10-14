@@ -3,7 +3,7 @@ namespace Glance3D
     // Hand-rolled vector/matrix types. Deliberately not System.Numerics or OpenTK.Mathematics:
     // the whole renderer is written in its own camera convention (X=forward, Y=right, Z=up)
     // and keeping the math in one small, readable file makes that convention easy to audit.
-    // OpenTK's Matrix4 only appears at the GL upload boundary (see RenderWindow.DrawModel).
+    // GL only ever sees the result as a float[16] (see RenderPlan.ViewMatrix).
     public struct Point
     {
         public float x, y, z;
