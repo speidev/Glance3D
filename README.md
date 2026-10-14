@@ -3,7 +3,7 @@
 A tiny, standalone glTF / GLB model viewer. Open a model, spin around it, fly through it, and
 close it again. No editor, no scene graph UI, no installer.
 
-**Try it in the browser:** [spei.dev/Glance3D](https://spei.dev/Glance3D/) (the same C#,
+**Try it in the browser:** [speidev.github.io/Glance3D](https://speidev.github.io/Glance3D/) (the same C#,
 compiled to WebAssembly). **Download:** [spei.dev/glance3d](https://spei.dev/glance3d/) or the
 [latest release](https://github.com/speidev/Glance3D/releases/latest).
 
@@ -59,7 +59,7 @@ writes a square, front-on thumbnail.
 
 ## In the browser
 
-[spei.dev/Glance3D](https://spei.dev/Glance3D/) opens a sample cabin. Drop a `.glb` on the page
+[speidev.github.io/Glance3D](https://speidev.github.io/Glance3D/) opens a sample cabin. Drop a `.glb` on the page
 or use **Open .glb**. The file stays on your machine, because nothing is uploaded. Add
 `?model=<url>` to open a model from another site, if that site allows cross-origin requests.
 The controls are the same as on desktop, plus touch: drag to orbit, two fingers to pan and

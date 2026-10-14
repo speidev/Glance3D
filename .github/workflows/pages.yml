@@ -1,7 +1,8 @@
 name: Web
 
-# Publishes the browser build (src/Glance3D.Web) to GitHub Pages on every push to main. With the
-# account's custom domain it's served at https://spei.dev/Glance3D/, which spei.dev/glance3d embeds.
+# Publishes the browser build (src/Glance3D.Web) to GitHub Pages on every push to main:
+# https://speidev.github.io/Glance3D/, which the project page at spei.dev/glance3d embeds. (spei.dev
+# itself is another repo's Pages site with its own custom domain, so it can't serve this path.)
 on:
   push:
     branches: [main]

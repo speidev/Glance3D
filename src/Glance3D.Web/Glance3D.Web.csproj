@@ -2,7 +2,7 @@
 
   <!-- The browser host: Glance3D.Core compiled to WebAssembly, driven by a small WebGL2 renderer in
        wwwroot/main.js. Publish output (bin/.../publish/wwwroot) is a static site; the Pages
-       workflow deploys it to spei.dev/Glance3D/. -->
+       workflow deploys it to speidev.github.io/Glance3D/. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Glance3D</RootNamespace>
@@ -14,6 +14,8 @@
          Their library-level trim warnings are moot once rooted, so they're suppressed rather
          than failing the warnings-as-errors build. -->
     <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+    <!-- No precompressed .br/.gz copies: GitHub Pages ignores them and gzips on the fly. -->
+    <CompressionEnabled>false</CompressionEnabled>
   </PropertyGroup>
 
   <ItemGroup>
