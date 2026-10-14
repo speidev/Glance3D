@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+  <!-- The browser host: Glance3D.Core compiled to WebAssembly, driven by a small WebGL2 renderer in
+       wwwroot/main.js. Publish output (bin/.../publish/wwwroot) is a static site; the Pages
+       workflow deploys it to spei.dev/Glance3D/. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Glance3D</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- SharpGLTF reads unknown glTF extensions through System.Text.Json's reflection-based node
+         API, which trimming can break. Keeping both assemblies whole costs ~260 KB compressed and
+         means a file with an unfamiliar extension loads the same in the browser as on desktop.
+         Their library-level trim warnings are moot once rooted, so they're suppressed rather
+         than failing the warnings-as-errors build. -->
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <TrimmerRootAssembly Include="SharpGLTF.Core" />
+    <TrimmerRootAssembly Include="System.Text.Json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Glance3D.Core\Glance3D.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The sample the viewer opens with, from tools/SampleGen. -->
+    <Content Include="..\..\samples\cabin.glb" Link="wwwroot\cabin.glb" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

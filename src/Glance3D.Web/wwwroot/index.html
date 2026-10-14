@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Glance3D</title>
+  <meta name="description" content="Glance3D in the browser: the same C# glTF loader and camera as the desktop app, compiled to WebAssembly and drawn with WebGL2." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #1f2126;        /* the desktop viewer's clear color, 0.12 / 0.13 / 0.15 */
+      --ink: #e8e6e1;
+      --mid: #8c8a84;
+      --rule: rgba(232, 230, 225, 0.14);
+      --chip: rgba(31, 33, 38, 0.82);
+    }
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; background: var(--bg); color: var(--ink); overflow: hidden; }
+    body { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; letter-spacing: 0.04em; }
+
+    canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; cursor: grab; }
+    canvas:active { cursor: grabbing; }
+
+    .bar {
+      position: fixed; left: 12px; right: 12px; top: 12px;
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      pointer-events: none;
+    }
+    .bar > * { pointer-events: auto; }
+    .brand { font-weight: 700; letter-spacing: 0.08em; margin-right: 4px; }
+    .status { color: var(--mid); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    button, .btn {
+      font: inherit; color: var(--ink); background: var(--chip);
+      border: 1px solid var(--rule); padding: 5px 9px; cursor: pointer;
+      text-decoration: none; text-transform: uppercase; font-size: 9px; letter-spacing: 0.16em;
+      backdrop-filter: blur(4px);
+    }
+    button:hover, .btn:hover { border-color: var(--ink); }
+    button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+
+    .help {
+      position: fixed; left: 12px; right: 12px; bottom: 10px;
+      color: var(--mid); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
+      pointer-events: none; line-height: 1.8;
+    }
+
+    .overlay {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      text-align: center; padding: 24px; color: var(--mid); pointer-events: none;
+      font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; line-height: 2;
+    }
+    .overlay.error { color: #e0907e; text-transform: none; letter-spacing: 0.04em; font-size: 11px; }
+    .drop { position: fixed; inset: 8px; border: 1px dashed var(--ink); display: none; pointer-events: none; }
+    body.dragging .drop { display: block; }
+
+    @media (max-width: 560px) {
+      .status { flex-basis: 100%; order: 10; }
+      .help .desk { display: none; }
+    }
+    @media (hover: hover) { .help .touch { display: none; } }
+    @media (hover: none)  { .help .desk { display: none; } }
+  </style>
+</head>
+<body>
+  <canvas id="gl" tabindex="0" aria-label="3D view: drag to orbit, right-drag or two fingers to pan, wheel or pinch to zoom, double-click to re-center"></canvas>
+
+  <div class="bar">
+    <span class="brand">GLANCE3D</span>
+    <span class="status" id="status"></span>
+    <button id="open" type="button">Open .glb</button>
+    <button id="mode" type="button" title="Tab">Orbit</button>
+    <button id="wire" type="button" aria-pressed="false" title="Z">Wire</button>
+    <button id="grid" type="button" aria-pressed="true" title="G">Grid</button>
+    <button id="frame" type="button" title="F">Frame</button>
+    <a class="btn" id="full" href="./" target="_blank" rel="noopener" hidden>Full screen ↗</a>
+    <input id="file" type="file" accept=".glb,model/gltf-binary" hidden />
+  </div>
+
+  <div class="help">
+    <span class="desk">Drag orbit · right-drag pan · wheel zoom · double-click re-center · WASD/QE move · Tab fly · F frame · R reset · Z wire · G grid · drop a .glb anywhere</span>
+    <span class="touch">Drag orbit · two fingers pan and pinch zoom · double-tap re-center</span>
+  </div>
+
+  <div class="overlay" id="overlay">Loading the .NET runtime…</div>
+  <div class="drop"></div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
