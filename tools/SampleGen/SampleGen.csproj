@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Builds samples/cabin.glb, the model the browser viewer opens with. Generated rather than
+       hand-authored so the repo ships no third-party art: from the repo root run "dotnet run" on tools/SampleGen
+       after changing it and commit the new .glb. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpGLTF.Toolkit" Version="1.0.6" />
+  </ItemGroup>
+
+</Project>
